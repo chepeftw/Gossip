@@ -148,7 +148,7 @@ func attendBufferChannel() {
 
 	    fsm = false
 	    stamp := payload.Timestamp
-	    if _, ok := StampMachine[stamp]; ok {
+	    if _, ok := StampMachine[stamp]; !ok {
 		StampMachine[stamp] = Init
 	    }
 
