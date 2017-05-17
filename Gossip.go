@@ -32,6 +32,14 @@ const (
     LocalhostAddr     = "127.0.0.1"
 )
 
+// Routing Messages FSM~ish
+const (
+    Init = iota
+    WaitForReply
+    Done
+    Received
+)
+
 // +++++++++ Global vars
 var myIP net.IP = net.ParseIP(LocalhostAddr)
 var myLH net.IP = net.ParseIP(LocalhostAddr)
@@ -57,7 +65,7 @@ var r1 = rand.New(s1)
 // +++++++++ Routing Protocol
 //var routes map[string]string = make(map[string]string)
 var RouterWaitRoom map[string]treesiplibs.Packet = make(map[string]treesiplibs.Packet)
-var RouterWaitCount map[string]int = make(map[string]int)
+var StampMachine map[string]int = make(map[string]int)
 var ForwardedMessages []string = []string{}
 var ReceivedMessages []string = []string{}
 
@@ -140,13 +148,17 @@ func attendBufferChannel() {
 
 	    fsm = false
 	    stamp := payload.Timestamp
+	    if _, ok := StampMachine[stamp]; ok {
+		StampMachine[stamp] = Init
+	    }
+
 	    switch payload.Type {
 	    case treesiplibs.HelloType:
 		if !eqIp( myIP, payload.Source) {
 		    if treesiplibs.Contains(ForwardedMessages, stamp) {
 			// a value ranging from 200ms to 400ms
 			time.Sleep(time.Duration((r1.Intn(20000)+20000)/100) * time.Millisecond)
-			RouterWaitCount[stamp] = 0
+			StampMachine[stamp] = Init
 		    }
 		    SendHelloReply(payload)
 		    log.Debug(myIP.String() + " => _HELLO to " + payload.Source.String())
@@ -156,7 +168,7 @@ func attendBufferChannel() {
 	    case treesiplibs.HelloTimeoutType:
 		if !treesiplibs.Contains(ForwardedMessages, stamp) {
 		    SendHello(stamp)
-
+		    StampMachine[stamp] = WaitForReply
 		    log.Debug(myIP.String() + " => HELLO_TIMEOUT ON TIME" + stamp)
 		} else {
 		    log.Debug(myIP.String() + " => HELLO_TIMEOUT delayed " + stamp)
@@ -166,72 +178,61 @@ func attendBufferChannel() {
 		// If the HelloReply is for me ...
 		if eqIp( myIP, payload.Destination ) {
 
-		    // If the the packet, based on the stamp, is my waiting room ...
-		    if _, ok := RouterWaitCount[stamp]; ok {
+		    // For the first hello reply, the stampMachine will be in WaitForReply, then it will move to Done
+		    // BUT If its in Done and the actual destination replies and try to forward it again to him
+		    // this is a special case
+		    if ( StampMachine[stamp] == Done && eqIp(payload.Source, RouterWaitRoom[stamp].Destination) ) ||
+			    StampMachine[stamp] == WaitForReply {
+			StopTimer()
+			SendRoute(payload.Source, RouterWaitRoom[stamp])
+			ForwardedMessages = treesiplibs.AppendToList(ForwardedMessages, stamp)
+			StampMachine[stamp] = Done
 
-			 // If the count it is 0, it means it wi
-			if ( RouterWaitCount[stamp] == 1 && eqIp(payload.Source, RouterWaitRoom[stamp].Destination) ) ||
-				RouterWaitCount[stamp] == 0 {
-			    StopTimer()
-			    SendRoute(payload.Source, RouterWaitRoom[stamp])
-			    ForwardedMessages = treesiplibs.AppendToList(ForwardedMessages, stamp)
-			    // delete(RouterWaitRoom, stamp)
-			    RouterWaitCount[stamp] = 1
-
-			    log.Debug(myIP.String() + " => HELLO_REPLY WIN from " + payload.Source.String())
-			}
-			//else {
-			//    log.Debug(myIP.String() + " => HELLO_REPLY FAIL from " + payload.Source.String())
-			//}
+			log.Debug(myIP.String() + " => HELLO_REPLY WIN from " + payload.Source.String())
 		    }
-		    //else {
-			//log.Debug(myIP.String() + " => HELLO_REPLY NOT IN RouterWaitRoom from " + payload.Source.String())
-		    //}
 
 		}
 
 		break
 	    case treesiplibs.RouteByGossipType:
 		if eqIp( myIP, payload.Gateway ) && !eqIp( myIP, payload.Destination ) {
+			if StampMachine[stamp] == Init {
 
-		    //if routingMode == 0 {
-		    RouterWaitRoom[stamp] = payload
-		    RouterWaitCount[stamp] = 0
-		    SendHello(stamp)
-		    //} else if routingMode == 1 {
-		    //	routes = parseRoutes(log)
-		    //	SendRoute(net.ParseIP(routes[payload.Destination.String()]), payload)
-		    //}
+			    RouterWaitRoom[stamp] = payload
+			    StampMachine[stamp] = WaitForReply
+			    SendHello(stamp)
 
-		    log.Debug(myIP.String() + " => ROUTE from " + payload.Source.String() + " to " + payload.Destination.String())
+			    log.Debug(myIP.String() + " => ROUTE from " + payload.Source.String() + " to " + payload.Destination.String())
+			}
 
 		} else if eqIp( myIP, payload.Gateway ) && eqIp( myIP, payload.Destination ) {
 
-		    //if (routingMode == 0 && !treesiplibs.Contains(ReceivedMessages, stamp)) || (routingMode == 1) {
 		    if !treesiplibs.Contains(ReceivedMessages, stamp) {
 			fsm = true
-
+			StampMachine[stamp] = Received
 			ReceivedMessages = treesiplibs.AppendToList(ReceivedMessages, stamp)
 
 			log.Debug(myIP.String() + " SUCCESS ROUTE -> stamp: " + stamp + " from " + payload.Source.String() + " after " + strconv.Itoa(payload.Hops) + " hops")
 			log.Debug(myIP.String() + " => " + j)
 			log.Info(myIP.String() + " => SUCCESS_ROUTE=1")
-			//} else if routingMode == 0 && treesiplibs.Contains(ReceivedMessages, stamp) {
+
 		    } else if treesiplibs.Contains(ReceivedMessages, stamp) {
 			log.Info(myIP.String() + " => SUCCESS_AGAIN_ROUTE=1")
 		    }
 
 		}
 		break
+
+	    // This case should only come from the FSM, not from the router
 	    case treesiplibs.AggregateType:
 		RouterWaitRoom[stamp] = payload
-		RouterWaitCount[stamp] = 0
+		StampMachine[stamp] = 1
 		SendHello(stamp)
 		break
 	    }
 
 
-	    // Now we start! FSM TIME!
+	    // Now we start! FSM TIME! By redirecting it internally to the FSM in other port
 	    if fsm {
 		directMessage(payload)
 	    }
@@ -277,12 +278,7 @@ func main() {
     if nnodes := os.Getenv("NNODES"); nnodes != "" {
 	globalNumberNodes, _ = strconv.Atoi( nnodes )
     }
-    //if ntimeout := os.Getenv("NTIMEOUT"); ntimeout != "" {
-    //	externalTimeout, _ := strconv.Atoi( ntimeout )
-    //	if externalTimeout > 0 {
-    //		timeout = externalTimeout
-    //	}
-    //}
+
     targetSync := float64(0)
     if tsync := os.Getenv("TARGETSYNC"); tsync != "" {
 	targetSync, _ = strconv.ParseFloat(tsync, 64)
@@ -361,3 +357,45 @@ func main() {
     <-done
 }
 
+
+
+
+
+
+/*
+The comments of this section correspond to the OLSR integration
+
+case treesiplibs.RouteByGossipType:
+if eqIp( myIP, payload.Gateway ) && !eqIp( myIP, payload.Destination ) {
+	if StampMachine[stamp] == Init {
+	    //if routingMode == 0 {
+	    RouterWaitRoom[stamp] = payload
+	    StampMachine[stamp] = WaitForReply
+	    SendHello(stamp)
+	    //} else if routingMode == 1 {
+	    //	routes = parseRoutes(log)
+	    //	SendRoute(net.ParseIP(routes[payload.Destination.String()]), payload)
+	    //}
+
+	    log.Debug(myIP.String() + " => ROUTE from " + payload.Source.String() + " to " + payload.Destination.String())
+	}
+
+} else if eqIp( myIP, payload.Gateway ) && eqIp( myIP, payload.Destination ) {
+
+    //if (routingMode == 0 && !treesiplibs.Contains(ReceivedMessages, stamp)) || (routingMode == 1) {
+    if !treesiplibs.Contains(ReceivedMessages, stamp) {
+	fsm = true
+	StampMachine[stamp] = Received
+	ReceivedMessages = treesiplibs.AppendToList(ReceivedMessages, stamp)
+
+	log.Debug(myIP.String() + " SUCCESS ROUTE -> stamp: " + stamp + " from " + payload.Source.String() + " after " + strconv.Itoa(payload.Hops) + " hops")
+	log.Debug(myIP.String() + " => " + j)
+	log.Info(myIP.String() + " => SUCCESS_ROUTE=1")
+	//} else if routingMode == 0 && treesiplibs.Contains(ReceivedMessages, stamp) {
+    } else if treesiplibs.Contains(ReceivedMessages, stamp) {
+	log.Info(myIP.String() + " => SUCCESS_AGAIN_ROUTE=1")
+    }
+
+}
+break
+ */
