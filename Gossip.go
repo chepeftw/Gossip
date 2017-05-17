@@ -139,12 +139,14 @@ func attendBufferChannel() {
 	    json.Unmarshal([]byte(j), &payload)
 
 	    fsm = false
+	    stamp := payload.Timestamp
 	    switch payload.Type {
 	    case treesiplibs.HelloType:
 		if !eqIp( myIP, payload.Source) {
-		    if treesiplibs.Contains(ForwardedMessages, payload.Timestamp) {
-			// a value ranging from 10ms to 200ms
-			time.Sleep(time.Duration((r1.Intn(19000)+1000)/100) * time.Millisecond)
+		    if treesiplibs.Contains(ForwardedMessages, stamp) {
+			// a value ranging from 200ms to 400ms
+			time.Sleep(time.Duration((r1.Intn(20000)+20000)/100) * time.Millisecond)
+			RouterWaitCount[stamp] = 0
 		    }
 		    SendHelloReply(payload)
 		    log.Debug(myIP.String() + " => _HELLO to " + payload.Source.String())
@@ -152,29 +154,22 @@ func attendBufferChannel() {
 
 		break
 	    case treesiplibs.HelloTimeoutType:
-		if !treesiplibs.Contains(ForwardedMessages, payload.Timestamp) {
-		    SendHello(payload.Timestamp)
+		if !treesiplibs.Contains(ForwardedMessages, stamp) {
+		    SendHello(stamp)
 
-		    log.Debug(myIP.String() + " => HELLO_TIMEOUT ON TIME" + payload.Timestamp)
+		    log.Debug(myIP.String() + " => HELLO_TIMEOUT ON TIME" + stamp)
 		} else {
-		    log.Debug(myIP.String() + " => HELLO_TIMEOUT delayed " + payload.Timestamp)
+		    log.Debug(myIP.String() + " => HELLO_TIMEOUT delayed " + stamp)
 		}
 		break
 	    case treesiplibs.HelloReplyType:
+		// If the HelloReply is for me ...
 		if eqIp( myIP, payload.Destination ) {
-		    stamp := payload.Timestamp
 
+		    // If the the packet, based on the stamp, is my waiting room ...
 		    if _, ok := RouterWaitCount[stamp]; ok {
 
-			// Splitting the SendRoute in before ifs to improve performance
-			//if RouterWaitCount[stamp] == 0 {
-			//    SendRoute(payload.Source, RouterWaitRoom[stamp])
-			//}
-			//
-			//if RouterWaitCount[stamp] == 1 && eqIp(payload.Source, RouterWaitRoom[stamp].Destination) {
-			//    SendRoute(payload.Source, RouterWaitRoom[stamp])
-			//}
-
+			 // If the count it is 0, it means it wi
 			if ( RouterWaitCount[stamp] == 1 && eqIp(payload.Source, RouterWaitRoom[stamp].Destination) ) ||
 				RouterWaitCount[stamp] == 0 {
 			    StopTimer()
@@ -184,22 +179,24 @@ func attendBufferChannel() {
 			    RouterWaitCount[stamp] = 1
 
 			    log.Debug(myIP.String() + " => HELLO_REPLY WIN from " + payload.Source.String())
-			} else {
-			    log.Debug(myIP.String() + " => HELLO_REPLY FAIL from " + payload.Source.String())
 			}
-		    } else {
-			log.Debug(myIP.String() + " => HELLO_REPLY NOT IN RouterWaitRoom from " + payload.Source.String())
+			//else {
+			//    log.Debug(myIP.String() + " => HELLO_REPLY FAIL from " + payload.Source.String())
+			//}
 		    }
+		    //else {
+			//log.Debug(myIP.String() + " => HELLO_REPLY NOT IN RouterWaitRoom from " + payload.Source.String())
+		    //}
 
 		}
 
 		break
 	    case treesiplibs.RouteByGossipType:
-		stamp := payload.Timestamp
 		if eqIp( myIP, payload.Gateway ) && !eqIp( myIP, payload.Destination ) {
 
 		    //if routingMode == 0 {
 		    RouterWaitRoom[stamp] = payload
+		    RouterWaitCount[stamp] = 0
 		    SendHello(stamp)
 		    //} else if routingMode == 1 {
 		    //	routes = parseRoutes(log)
@@ -227,9 +224,9 @@ func attendBufferChannel() {
 		}
 		break
 	    case treesiplibs.AggregateType:
-		RouterWaitRoom[payload.Timestamp] = payload
-		RouterWaitCount[payload.Timestamp] = 0
-		SendHello(payload.Timestamp)
+		RouterWaitRoom[stamp] = payload
+		RouterWaitCount[stamp] = 0
+		SendHello(stamp)
 		break
 	    }
 
