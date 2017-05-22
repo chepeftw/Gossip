@@ -49,7 +49,7 @@ var timer *time.Timer
 
 //var startTime int64 = 0
 
-var globalNumberNodes int = 0
+//var globalNumberNodes int = 0
 //var externalTimeout int = 0
 //var globalCounter int = 0
 
@@ -275,14 +275,23 @@ func directMessage(payload treesiplibs.Packet) {
 
 func main() {
 
-    if nnodes := os.Getenv("NNODES"); nnodes != "" {
-	globalNumberNodes, _ = strconv.Atoi( nnodes )
-    }
+    //if nnodes := os.Getenv("NNODES"); nnodes != "" {
+	//globalNumberNodes, _ = strconv.Atoi( nnodes )
+    //}
 
-    targetSync := float64(0)
-    if tsync := os.Getenv("TARGETSYNC"); tsync != "" {
-	targetSync, _ = strconv.ParseFloat(tsync, 64)
+    //targetSync := float64(0)
+    //if tsync := os.Getenv("TARGETSYNC"); tsync != "" {
+	//targetSync, _ = strconv.ParseFloat(tsync, 64)
+    //}
+
+    confPath := "/treesip/conf.yml"
+    if len(os.Args[1:]) >= 1 {
+	confPath = os.Args[1]
     }
+    var c treesiplibs.Conf
+    c.GetConf( confPath )
+
+    targetSync := c.TargetSync
 
 
     // Logger configuration
@@ -318,9 +327,10 @@ func main() {
     if targetSync > now {
 	sleepTime = int(targetSync - now)
 	log.Info("SYNC: Sync time is " + strconv.FormatFloat( targetSync, 'f', 6, 64) )
-    } else {
-	sleepTime = globalNumberNodes
     }
+    //else {
+	//sleepTime = globalNumberNodes
+    //}
     log.Info("SYNC: sleepTime is " + strconv.Itoa(sleepTime))
     time.Sleep(time.Second * time.Duration(sleepTime))
     // ------------
